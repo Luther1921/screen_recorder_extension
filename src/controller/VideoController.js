@@ -1,20 +1,29 @@
 const Video = require("../model/video");
 const fs = require("fs");
-const transcribeAudio = require("../helper/transcribe");
-const extractAudioFromVideo = require("../helper/extract");
+const transcribeAudio = require("../service/transcribe");
+const extractAudioFromVideo = require("../service/extract");
+const generateSessionId = require("../helper/generateSessionId");
 
-let videoChunks = [];
-let transcriptionChunks = [];
-
-//Endpoint that Handles incoming video chunks and transcribe audio asynchronously
+let sessionChunks = {}; // Object to store video and transcription chunks based on session ID
 
 const videoStream = async (req, res) => {
   try {
-    const { videoChunk } = req.body;
+    const { videoChunk, sessionId } = req.body;
+
+    // Check if the session ID is provided, generate one if not
+    const currentSessionId = sessionId || generateSessionId();
+
+    // Initialize session chunks if it's a new session
+    if (!sessionChunks[currentSessionId]) {
+      sessionChunks[currentSessionId] = {
+        videoChunks: [],
+        transcriptionChunks: [],
+      };
+    }
 
     // Temporary paths for video and extracted audio
-    const videoFilePath = "temp-video.mp4";
-    const audioFilePath = "temp-audio.wav";
+    const videoFilePath = `temp-video-${currentSessionId}.mp4`;
+    const audioFilePath = `temp-audio-${currentSessionId}.wav`;
 
     // Save video chunk to temporary file
     fs.writeFileSync(videoFilePath, Buffer.from(videoChunk, "base64"));
@@ -23,19 +32,21 @@ const videoStream = async (req, res) => {
     await extractAudioFromVideo(videoFilePath, audioFilePath);
 
     const transcription = await transcribeAudio(audioFilePath);
-    transcriptionChunks.push(transcription);
+    sessionChunks[currentSessionId].transcriptionChunks.push(transcription);
 
-    console.log(transcriptionChunks);
     // Remove temporary files
     fs.unlinkSync(videoFilePath);
     fs.unlinkSync(audioFilePath);
 
     // Store video chunks
-    videoChunks.push(Buffer.from(videoChunk, "base64"));
+    sessionChunks[currentSessionId].videoChunks.push(
+      Buffer.from(videoChunk, "base64")
+    );
 
-    console.log(transcriptionChunks);
-    console.log(videoChunks);
-    res.status(200).send("Video chunk received and processing.");
+    res.status(200).json({
+      sessionId: currentSessionId,
+      message: "Video chunk received and processing.",
+    });
   } catch (error) {
     res.status(500).json(error.message);
   }
@@ -45,17 +56,21 @@ const videoStream = async (req, res) => {
 
 const compile = async (req, res) => {
   try {
-    // Compile video from chunks
-    const compiledVideo = Buffer.concat(videoChunks);
+    const { sessionId } = req.body;
 
-    // Compile transcription text from chunks
-    const compiledTranscription = transcriptionChunks.join(" ");
-    console.log(videoChunks);
+    // Check if the provided session ID exists in sessionChunks
+    if (!sessionChunks[sessionId]) {
+      return res.status(400).json({ error: "Invalid session ID" });
+    }
+
+    const compiledVideo = Buffer.concat(sessionChunks[sessionId].videoChunks);
+    const compiledTranscription =
+      sessionChunks[sessionId].transcriptionChunks.join(" ");
+
     // Save compiled video to local disk
     const videoFileName = "compiled-video.webm";
     fs.writeFileSync(videoFileName, compiledVideo);
 
-    // Save video and transcription data to the database
     const video = await Video.create({
       videoUrl: videoFileName,
       transcription: compiledTranscription,
@@ -64,12 +79,14 @@ const compile = async (req, res) => {
 
     // Delete the local compiled video file after saving to the database
     fs.unlinkSync(videoFileName);
+    // Clear the chunks for this session after compilation
+    delete sessionChunks[sessionId];
 
     res.json({
-      videoId: Video.id,
+      videoId: video.id,
       videoUrl: video.videoUrl,
       transcription: video.transcription,
-      uploadTime: Date(),
+      uploadTime: video.uploadTime,
     });
   } catch (error) {
     console.error("Error during compilation:", error);
@@ -91,7 +108,7 @@ const playVideo = async (req, res) => {
     res.json({
       videoUrl: video.videoUrl,
       transcription: video.transcription,
-      uploadTime: Date(),
+      uploadTime: video.uploadTime,
     });
   } catch (error) {
     res.status(500).json(error.message);
