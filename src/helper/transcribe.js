@@ -1,33 +1,41 @@
-const axios = require("axios");
+const fs = require("fs");
+const { Deepgram } = require("@deepgram/sdk");
+const dotenv = require("dotenv");
+dotenv.config();
 
-const OPENAI_API_KEY = process.env.API_KEY;
-const WHISPER_API_URL = process.env.API_URL;
+const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
 
-async function transcribeAudio(audioData) {
+const mimetype = "audio/wav";
+
+// Initialize the Deepgram SDK
+
+// Check whether requested file is local or remote, and prepare accordingly
+async function transcribeAudio(file) {
+  const deepgram = new Deepgram(deepgramApiKey);
+  let source;
+
+  if (file.startsWith("http")) {
+    source = {
+      url: file,
+    };
+  } else {
+    const audio = fs.readFileSync(file);
+    source = {
+      buffer: audio,
+      mimetype: mimetype,
+    };
+  }
+
   try {
-    const response = await axios.post(
-      WHISPER_API_URL,
-      {
-        audio: audioData,
-        config: {
-          language: "en",
-          punctuate: true,
-        },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
-      }
-    );
+    const response = await deepgram.transcription.preRecorded(source, {
+      smart_format: true,
+      model: "nova",
+    });
 
-    // Extract transcription from the response
-    const transcription = response.data.choices[0].text.trim();
-
-    return transcription;
+    return response.results.channels[0].alternatives[0].transcript;
   } catch (error) {
-    console.error("Error transcribing audio:", error);
-    throw error;
+    console.log("Error transcribing audio:", error);
+    throw error; //
   }
 }
 
