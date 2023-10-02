@@ -115,19 +115,4 @@ const playVideo = async (req, res) => {
   }
 };
 
-const test = async (req, res) => {
-  try {
-    const update = await Video.updateMany({}, { $set: { uploadTime: "" } });
-    console.log(update);
-    if (!update) {
-      return res.status(400).json({ error: "Error occured !" });
-    }
-
-    return res.status(200).json({ message: "successful!" });
-  } catch (error) {
-    console.log("error", error);
-    return error;
-  }
-};
-
-module.exports = { videoStream, compile, playVideo, test };
+module.exports = { videoStream, compile, playVideo };
